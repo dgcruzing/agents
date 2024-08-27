@@ -1,0 +1,111 @@
+# https://x.com/skirano/status/1828101118465110297
+import os
+import asyncio
+from openai import AsyncOpenAI
+from colorama import Fore, Style, init
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Initialize colorama
+init(autoreset=True)
+
+# Initialize the AsyncOpenAI client with OpenRouter configuration
+client = AsyncOpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=os.getenv('OPENROUTER_API_KEY'),
+)
+
+# Define two different models
+INSTRUCT_MODEL = "google/gemini-flash-1.5" # You can change this to your preferred instruct model
+BASE_MODEL = "meta-llama/llama-3-1-4b5b"  # You can change this to your preferred base model
+
+# Updated AI interaction protocol prompt for the instruct model
+INSTRUCT_MODEL_PROMPT = """
+You are an expert query reformulator with extensive knowledge in natural language processing and AI
+communication. Your task is to transform user queries into clear, concise, and explicit instructions
+for a base language model.
+
+Please provide responses that are brief and written in a formal style. Use simple vocabulary,
+straightforward sentence structures, and avoid idiomatic expressions or complex linguistic constructs.
+
+Example:
+User: "What’s the deal with quantum computing?"
+Your response:
+You are an expert computer scientist with extensive knowledge in quantum computing. Your task is to 
+generate a concise explanation about the fundamental principles of quantum computing. Please provide 
+a response that is a summary of 3-4 sentences and written in a formal style. Avoid technical jargon 
+and focus on the key concepts that distinguish quantum computing from classical computing.
+
+Task: Explain the basic principles of quantum computing
+
+Your response:
+
+Guidelines:
+1. Always start your response with "You are an expert [relevant role] with extensive knowledge in 
+   [relevant domain]."
+2. Clearly state the task for the base model.
+3. Specify the desired length and style of the response.
+4. If relevant, include additional constraints or guidelines.
+5. End your response with the task formatted as shown in the example.
+
+Based on the user’s input, formulate a clear and concise query for the base model following this 
+structure. Do not engage in conversation or provide direct answers. Your response should only be the 
+reformulated query for the base model.
+"""
+
+async def stream_model_response(messages, model, model_type):
+    try:
+        stream = await client.chat.completions.create(
+            model=model,
+            messages=messages,
+            stream=True,
+            extra_headers={
+                "X-Title": f"AI Chat Application - {model}",
+            },
+        )
+        full_response = ""
+        model_name = INSTRUCT_MODEL if model_type == "Instruct" else BASE_MODEL
+        print(f"{Fore.CYAN}{Style.BRIGHT}{model_type} Model ({model_name}):{Style.RESET_ALL}")
+        async for chunk in stream:
+            if chunk.choices[0].delta.content is not None:
+                content = chunk.choices[0].delta.content
+                print(content, end="", flush=True)
+                full_response += content
+        print() # New line after streaming is complete
+        return full_response
+    except Exception as e:
+        print(f"{Fore.RED}Error in {model}: {e}{Style.RESET_ALL}")
+        return f"I apologize, but I encountered an error while processing your request in the {model} model."
+
+async def chat_with_ai():
+    print("Welcome to the AI Chat Application!")
+    print("You can start chatting with the AI. Type 'quit' to exit.")
+
+    instruct_model_history = [
+        {"role": "system", "content": INSTRUCT_MODEL_PROMPT}
+    ]
+
+    base_model_history = [] # Empty prompt for the base model
+
+    while True:
+        user_input = input("\nYou: ")
+        if user_input.lower() == "quit":
+            print("Thank you for chatting. Goodbye!")
+            break
+
+        instruct_model_history.append({"role": "user", "content": user_input})
+        instruct_response = await stream_model_response(instruct_model_history, INSTRUCT_MODEL, "Instruct")
+        instruct_model_history.append({"role": "assistant", "content": instruct_response})
+
+        # Use instruct model's response as input for base model
+        base_model_history.append({"role": "user", "content": instruct_response})
+        base_response = await stream_model_response(base_model_history, BASE_MODEL, "Base")
+        base_model_history.append({"role": "assistant", "content": base_response})
+
+async def main():
+    await chat_with_ai()
+
+if __name__ == "__main__":
+    asyncio.run(main())
